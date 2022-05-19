@@ -17,7 +17,7 @@ module Searchkick
       :with_score, :misspellings?, :scroll_id, :clear_scroll, :missing_records, :with_hit
 
     def initialize(klass, term = "*", **options)
-      unknown_keywords = options.keys - [:aggs, :block, :body, :body_options, :boost,
+      unknown_keywords = options.keys - [:aggs, :block, :body, :body_options, :boost, :boost_and,
         :boost_by, :boost_by_distance, :boost_by_recency, :boost_where, :conversions, :conversions_term, :debug, :emoji, :exclude, :explain,
         :fields, :highlight, :includes, :index_name, :indices_boost, :limit, :load,
         :match, :misspellings, :models, :model_includes, :offset, :operator, :order, :padding, :page, :per_page, :profile,
@@ -243,7 +243,15 @@ module Searchkick
     def prepare
       boost_fields, fields = set_fields
 
-      operator = options[:operator] || "and"
+      if options[:operator].is_a? Hash
+        default_operator = options[:operator][:default] ? options[:operator][:default] : "and"
+        operator_by_field = {
+          **(options[:operator][:and] || []).map { [_1.to_s, "and"] }.to_h,
+          **(options[:operator][:or] || []).map { [_1.to_s, "or"] }.to_h
+        }
+      end
+      default_operator ||= options[:operator] || "and"
+      operator_by_field ||= {}
 
       # pagination
       page = [options[:page].to_i, 1].max
@@ -361,7 +369,7 @@ module Searchkick
                 :match
               end
 
-            shared_options[:operator] = operator if match_type == :match
+            shared_options[:operator] = operator_by_field[field.split('.').first] || default_operator if match_type == :match
 
             exclude_analyzer = nil
             exclude_field = field
@@ -369,7 +377,7 @@ module Searchkick
             field_misspellings = misspellings && (!misspellings_fields || misspellings_fields.include?(base_field(field)))
 
             if field == "_all" || field.end_with?(".analyzed")
-              shared_options[:cutoff_frequency] = 0.001 unless operator.to_s == "and" || field_misspellings == false || (!below73? && !track_total_hits?)
+              shared_options[:cutoff_frequency] = 0.001 unless shared_options[:operator].to_s == "and" || field_misspellings == false || (!below73? && !track_total_hits?)
               qs << shared_options.merge(analyzer: "searchkick_search")
 
               # searchkick_search and searchkick_search2 are the same for some languages
@@ -397,7 +405,6 @@ module Searchkick
             else
               q2 = qs.map { |q| {match_type => {field => q}} }
             end
-
             # boost exact matches more
             if field =~ /\.word_(start|middle|end)\z/ && searchkick_options[:word] != false
               queries_to_add << {
@@ -408,6 +415,17 @@ module Searchkick
                     }
                   },
                   should: {match_type => {field.sub(/\.word_(start|middle|end)\z/, ".analyzed") => qs.first}}
+                }
+              }
+            elsif options[:boost_and] && shared_options[:operator] == "or"
+              queries_to_add << {
+                bool: {
+                  must: {
+                    bool: {
+                      should: q2
+                    }
+                  },
+                  should: qs.map { |q| {match_type => {field => q.merge({ operator: "and"})}} } 
                 }
               }
             else
