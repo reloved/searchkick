@@ -23,6 +23,13 @@ class RelationTest < Minitest::Test
     assert_equal ["Product A"], products.map(&:name)
   end
 
+  def test_non_mutating
+    store_names ["Product A", "Product B"]
+    products = Product.search("*").order(:name)
+    products.limit(1)
+    assert_equal ["Product A", "Product B"], products.map(&:name)
+  end
+
   def test_load
     products = Product.search("*")
     refute products.loaded?
@@ -44,11 +51,26 @@ class RelationTest < Minitest::Test
     assert_equal 10000, Product.search("*").limit(10).except(:limit).limit_value
   end
 
-  # TODO call pluck on Active Record query
+  def test_first
+    store_names ["Product A", "Product B"]
+    products = Product.search("product")
+    assert_kind_of Product, products.first
+    assert_kind_of Array, products.first(1)
+    assert_equal 1, products.limit(1).first(2).size
+  end
+
+  def test_first_loaded
+    store_names ["Product A", "Product B"]
+    products = Product.search("product").load
+    assert_kind_of Product, products.first
+  end
+
+  # TODO call pluck or select on Active Record query
   # currently uses pluck from Active Support enumerable
   def test_pluck
     store_names ["Product A", "Product B"]
     assert_equal ["Product A", "Product B"], Product.search("product").pluck(:name).sort
+    assert_equal ["Product A", "Product B"], Product.search("product").load(false).pluck(:name).sort
   end
 
   def test_model
@@ -70,9 +92,37 @@ class RelationTest < Minitest::Test
     refute relation.loaded?
   end
 
-  # TODO uncomment in 6.0
-  # def test_to_yaml
+  def test_inspect
+    store_names ["Product A"]
+    assert_match "#<Searchkick::Relation [#<Product", Product.search("product").inspect
+  end
+
+  # TODO uncomment in 7.0
+  # def test_to_json
   #   store_names ["Product A", "Product B"]
-  #   assert_equal Product.all.to_yaml, Product.search("product").to_yaml
+  #   if mongoid?
+  #     assert_equal Product.all.to_a.to_json, Product.search("product").to_json
+  #   else
+  #     assert_equal Product.all.to_json, Product.search("product").to_json
+  #   end
   # end
+
+  # TODO uncomment in 7.0
+  # def test_as_json
+  #   store_names ["Product A", "Product B"]
+  #   if mongoid?
+  #     assert_equal Product.all.to_a.as_json, Product.search("product").as_json
+  #   else
+  #     assert_equal Product.all.as_json, Product.search("product").as_json
+  #   end
+  # end
+
+  def test_to_yaml
+    store_names ["Product A", "Product B"]
+    if mongoid?
+      assert_equal Product.all.to_a.to_yaml, Product.search("product").to_yaml
+    else
+      assert_equal Product.all.to_yaml, Product.search("product").to_yaml
+    end
+  end
 end

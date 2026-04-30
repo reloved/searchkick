@@ -7,17 +7,26 @@ require "active_support/notifications"
 
 ActiveSupport::Notifications.subscribe "request.searchkick" do |*args|
   event = ActiveSupport::Notifications::Event.new(*args)
-  puts "Import: #{event.duration.round}ms"
+  # puts "Import: #{event.duration.round}ms"
 end
 
-ActiveJob::Base.queue_adapter = :sidekiq
+# ActiveJob::Base.queue_adapter = :sidekiq
+
+class SearchSerializer
+  def dump(object)
+    JSON.generate(object)
+  end
+end
+
+# Elasticsearch::API.settings[:serializer] = SearchSerializer.new
+# OpenSearch::API.settings[:serializer] = SearchSerializer.new
 
 Searchkick.redis = Redis.new
 
-ActiveRecord::Base.default_timezone = :utc
+ActiveRecord.default_timezone = :utc
 ActiveRecord::Base.time_zone_aware_attributes = true
-# ActiveRecord::Base.establish_connection adapter: "sqlite3", database: "/tmp/searchkick"
-ActiveRecord::Base.establish_connection "postgresql://localhost/searchkick_demo_development"
+ActiveRecord::Base.establish_connection adapter: "sqlite3", database: "/tmp/searchkick"
+# ActiveRecord::Base.establish_connection "postgresql://localhost/searchkick_bench"
 # ActiveRecord::Base.logger = Logger.new(STDOUT)
 
 ActiveJob::Base.logger = nil
@@ -37,10 +46,12 @@ end
 if ENV["SETUP"]
   total_docs = 100000
 
-  ActiveRecord::Migration.create_table :products, force: :cascade do |t|
-    t.string :name
-    t.string :color
-    t.integer :store_id
+  ActiveRecord::Schema.define do
+    create_table :products, force: :cascade do |t|
+      t.string :name
+      t.string :color
+      t.integer :store_id
+    end
   end
 
   records = []
@@ -68,7 +79,7 @@ start_mem = GetProcessMem.new.mb
 
 time =
   Benchmark.realtime do
-    # result = RubyProf.profile do
+    # result = RubyProf::Profile.profile do
     # report = MemoryProfiler.report do
     # stats = AllocationStats.trace do
     reindex = Product.reindex #(async: true)
@@ -91,7 +102,6 @@ time =
     # end
   end
 
-puts
 puts "Time: #{time.round(1)}s"
 
 if result

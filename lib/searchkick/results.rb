@@ -3,8 +3,7 @@ module Searchkick
     include Enumerable
     extend Forwardable
 
-    # TODO remove klass and options in 6.0
-    attr_reader :klass, :response, :options
+    attr_reader :response
 
     def_delegators :results, :each, :any?, :empty?, :size, :length, :slice, :[], :to_ary
 
@@ -12,11 +11,6 @@ module Searchkick
       @klass = klass
       @response = response
       @options = options
-    end
-
-    # TODO make private in 6.0
-    def results
-      @results ||= with_hit.map(&:first)
     end
 
     def with_hit
@@ -34,7 +28,7 @@ module Searchkick
     def suggestions
       if response["suggest"]
         response["suggest"].values.flat_map { |v| v.first["options"] }.sort_by { |o| -o["score"] }.map { |o| o["text"] }.uniq
-      elsif options[:suggest] || options[:term] == "*" # TODO remove 2nd term
+      elsif options[:suggest]
         []
       else
         raise "Pass `suggest: true` to the search method for suggestions"
@@ -193,7 +187,12 @@ module Searchkick
       else
         begin
           # TODO Active Support notifications for this scroll call
-          Results.new(@klass, Searchkick.client.scroll(scroll: options[:scroll], body: {scroll_id: scroll_id}), @options)
+          params = {
+            scroll: options[:scroll],
+            body: {scroll_id: scroll_id}
+          }
+          params[:opaque_id] = options[:opaque_id] if options[:opaque_id]
+          Results.new(@klass, Searchkick.client.scroll(params), @options)
         rescue => e
           if Searchkick.not_found_error?(e) && e.message =~ /search_context_missing_exception/i
             raise Error, "Scroll id has expired"
@@ -216,6 +215,12 @@ module Searchkick
     end
 
     private
+
+    attr_reader :klass, :options
+
+    def results
+      @results ||= with_hit.map(&:first)
+    end
 
     def with_hit_and_missing_records
       @with_hit_and_missing_records ||= begin

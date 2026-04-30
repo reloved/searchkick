@@ -58,6 +58,25 @@ module Searchkick
         end
       end
 
+      index.conversions_v2_fields.each do |conversions_field|
+        key = source.key?(conversions_field) ? conversions_field : conversions_field.to_sym
+        if !partial_reindex || source[key]
+          if index.options[:case_sensitive]
+            source[key] =
+              (source[key] || {}).reduce(Hash.new(0)) do |memo, (k, v)|
+                memo[k.to_s.gsub(".", "*")] += v
+                memo
+              end
+          else
+            source[key] =
+              (source[key] || {}).reduce(Hash.new(0)) do |memo, (k, v)|
+                memo[k.to_s.downcase.gsub(".", "*")] += v
+                memo
+              end
+          end
+        end
+      end
+
       # hack to prevent generator field doesn't exist error
       if !partial_reindex
         index.suggest_fields.each do |field|

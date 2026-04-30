@@ -3,8 +3,9 @@ require "active_support"
 require "active_support/core_ext/hash/deep_merge"
 require "active_support/core_ext/module/attr_internal"
 require "active_support/core_ext/module/delegation"
+require "active_support/deprecation"
+require "active_support/log_subscriber"
 require "active_support/notifications"
-require "hashie"
 
 # stdlib
 require "forwardable"
@@ -49,7 +50,7 @@ module Searchkick
   class MissingIndexError < Error; end
   class UnsupportedVersionError < Error
     def message
-      "This version of Searchkick requires Elasticsearch 7+ or OpenSearch 1+"
+      "This version of Searchkick requires Elasticsearch 8+ or OpenSearch 2+"
     end
   end
   class InvalidQueryError < Error; end
@@ -57,7 +58,7 @@ module Searchkick
   class ImportError < Error; end
 
   class << self
-    attr_accessor :search_method_name, :timeout, :models, :client_options, :redis, :index_prefix, :index_suffix, :queue_name, :model_options, :client_type
+    attr_accessor :search_method_name, :timeout, :models, :client_options, :redis, :index_prefix, :index_suffix, :queue_name, :model_options, :client_type, :parent_job
     attr_writer :client, :env, :search_timeout
     attr_reader :aws_credentials
   end
@@ -67,6 +68,7 @@ module Searchkick
   self.client_options = {}
   self.queue_name = :searchkick
   self.model_options = {}
+  self.parent_job = "ActiveJob::Base"
 
   def self.client
     @client ||= begin
@@ -83,27 +85,21 @@ module Searchkick
           raise Error, "No client found - install the `elasticsearch` or `opensearch-ruby` gem"
         end
 
-      # check after client to ensure faraday is installed
-      # TODO remove in Searchkick 6
-      if defined?(Typhoeus) && Gem::Version.new(Faraday::VERSION) < Gem::Version.new("0.14.0")
-        require "typhoeus/adapters/faraday"
-      end
-
       if client_type == :opensearch
         OpenSearch::Client.new({
           url: ENV["OPENSEARCH_URL"],
-          transport_options: {request: {timeout: timeout}, headers: {content_type: "application/json"}},
+          transport_options: {request: {timeout: timeout}},
           retry_on_failure: 2
         }.deep_merge(client_options)) do |f|
           f.use Searchkick::Middleware
           f.request :aws_sigv4, signer_middleware_aws_params if aws_credentials
         end
       else
-        raise Error, "The `elasticsearch` gem must be 7+" if Elasticsearch::VERSION.to_i < 7
+        raise Error, "The `elasticsearch` gem must be 8+" if Elasticsearch::VERSION.to_i < 8
 
         Elasticsearch::Client.new({
           url: ENV["ELASTICSEARCH_URL"],
-          transport_options: {request: {timeout: timeout}, headers: {content_type: "application/json"}},
+          transport_options: {request: {timeout: timeout}},
           retry_on_failure: 2
         }.deep_merge(client_options)) do |f|
           f.use Searchkick::Middleware
@@ -137,16 +133,14 @@ module Searchkick
     @opensearch
   end
 
-  # TODO always check true version in Searchkick 6
-  def self.server_below?(version, true_version = false)
-    server_version = !true_version && opensearch? ? "7.10.2" : self.server_version
+  def self.server_below?(version)
     Gem::Version.new(server_version.split("-")[0]) < Gem::Version.new(version.split("-")[0])
   end
 
   # private
   def self.knn_support?
     if opensearch?
-      !server_below?("2.4.0", true)
+      !server_below?("2.4.0")
     else
       !server_below?("8.6.0")
     end
@@ -177,17 +171,11 @@ module Searchkick
       end
     end
 
-    # TODO remove in Searchkick 6
-    if options[:execute] == false
-      Searchkick.warn("The execute option is no longer needed")
-      options.delete(:execute)
-    end
-
     options = options.merge(block: block) if block
     Relation.new(klass, term, **options)
   end
 
-  def self.multi_search(queries)
+  def self.multi_search(queries, opaque_id: nil)
     return if queries.empty?
 
     queries = queries.map { |q| q.send(:query) }
@@ -196,7 +184,7 @@ module Searchkick
       body: queries.flat_map { |q| [q.params.except(:body).to_json, q.body.to_json] }.map { |v| "#{v}\n" }.join
     }
     ActiveSupport::Notifications.instrument("multi_search.searchkick", event) do
-      MultiSearch.new(queries).perform
+      MultiSearch.new(queries, opaque_id: opaque_id).perform
     end
   end
 

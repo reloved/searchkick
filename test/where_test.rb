@@ -76,7 +76,7 @@ class WhereTest < Minitest::Test
     assert_search "product", ["Product B"], where: {user_ids: {_not: [3, nil]}}
   end
 
-  def test_where_relation
+  def test_relation
     now = Time.now
     store [
       {name: "Product A", store_id: 1, in_stock: true, backordered: true, created_at: now, orders_count: 4, user_ids: [1, 2, 3]},
@@ -88,6 +88,9 @@ class WhereTest < Minitest::Test
 
     # multiple where
     assert_search_relation ["Product A"], Product.search("product").where(in_stock: true).where(backordered: true)
+    assert_search_relation ["Product A"], Product.search("product").where.not(store_id: 2).where.not(store_id: 3).where.not(store_id: 4)
+    assert_search_relation [], Product.search("product").where(in_stock: true).where(in_stock: false)
+    assert_search_relation [], Product.search("product").where(in_stock: true).where("in_stock" => false)
 
     # rewhere
     assert_search_relation ["Product A", "Product C"], Product.search("product").where(in_stock: true).rewhere(backordered: true)
@@ -95,9 +98,13 @@ class WhereTest < Minitest::Test
     # not
     assert_search_relation ["Product C", "Product D"], Product.search("product").where.not(in_stock: true)
     assert_search_relation ["Product C"], Product.search("product").where.not(in_stock: true).where(backordered: true)
+    assert_search_relation ["Product A", "Product C"], Product.search("product").where.not(store_id: [2, 4])
+
+    # compound
+    assert_search_relation ["Product B", "Product C"], Product.search("product").where(_or: [{in_stock: true}, {backordered: true}]).where(_or: [{store_id: 2}, {orders_count: 2}])
   end
 
-  def test_where_string_operators
+  def test_string_operators
     error = assert_raises(ArgumentError) do
       assert_search "product", [], where: {store_id: {"lt" => 2}}
     end
@@ -146,14 +153,7 @@ class WhereTest < Minitest::Test
   def test_regexp_case
     store_names ["abcde"]
     assert_search "*", [], where: {name: /\AABCDE\z/}
-    if case_insensitive_supported?
-      assert_search "*", ["abcde"], where: {name: /\AABCDE\z/i}
-    else
-      error = assert_raises(ArgumentError) do
-        assert_search "*", [], where: {name: /\AABCDE\z/i}
-      end
-      assert_equal "Case-insensitive flag does not work with Elasticsearch < 7.10", error.message
-    end
+    assert_search "*", ["abcde"], where: {name: /\AABCDE\z/i}
   end
 
   def test_prefix
@@ -167,14 +167,11 @@ class WhereTest < Minitest::Test
       {name: "Product B"}
     ]
     assert_search "product", ["Product A"], where: {user_ids: {exists: true}}
-    # TODO add support for false in Searchkick 6
-    assert_warns "Passing a value other than true to exists is not supported" do
-      assert_search "product", ["Product A"], where: {user_ids: {exists: false}}
-    end
-    # TODO raise error in Searchkick 6
-    assert_warns "Passing a value other than true to exists is not supported" do
+    assert_search "product", ["Product B"], where: {user_ids: {exists: false}}
+    error = assert_raises(ArgumentError) do
       assert_search "product", ["Product A"], where: {user_ids: {exists: nil}}
     end
+    assert_equal "Passing a value other than true or false to exists is not supported", error.message
   end
 
   def test_like
@@ -217,39 +214,26 @@ class WhereTest < Minitest::Test
   end
 
   def test_ilike
-    if case_insensitive_supported?
-      store_names ["Product ABC", "Product DEF"]
-      assert_search "product", ["Product ABC"], where: {name: {ilike: "%abc%"}}
-      assert_search "product", ["Product ABC"], where: {name: {ilike: "%abc"}}
-      assert_search "product", [], where: {name: {ilike: "abc"}}
-      assert_search "product", [], where: {name: {ilike: "abc%"}}
-      assert_search "product", [], where: {name: {ilike: "abc%"}}
-      assert_search "product", ["Product ABC"], where: {name: {ilike: "Product_abc"}}
-    else
-      error = assert_raises(ArgumentError) do
-        Product.search("*", where: {name: {ilike: "%abc%"}})
-      end
-      assert_equal "ilike requires Elasticsearch 7.10+", error.message
-    end
+    store_names ["Product ABC", "Product DEF"]
+    assert_search "product", ["Product ABC"], where: {name: {ilike: "%abc%"}}
+    assert_search "product", ["Product ABC"], where: {name: {ilike: "%abc"}}
+    assert_search "product", [], where: {name: {ilike: "abc"}}
+    assert_search "product", [], where: {name: {ilike: "abc%"}}
+    assert_search "product", [], where: {name: {ilike: "abc%"}}
+    assert_search "product", ["Product ABC"], where: {name: {ilike: "Product_abc"}}
   end
 
   def test_ilike_escape
-    skip unless case_insensitive_supported?
-
     store_names ["Product 100%", "Product B"]
     assert_search "product", ["Product 100%"], where: {name: {ilike: "% 100\\%"}}
   end
 
   def test_ilike_special_characters
-    skip unless case_insensitive_supported?
-
     store_names ["Product ABC\"", "Product B"]
     assert_search "product", ["Product ABC\""], where: {name: {ilike: "%abc\""}}
   end
 
   def test_ilike_optional_operators
-    skip unless case_insensitive_supported?
-
     store_names ["Product A&B", "Product B", "Product <3", "Product @Home"]
     assert_search "product", ["Product A&B"], where: {name: {ilike: "%a&b"}}
     assert_search "product", ["Product <3"], where: {name: {ilike: "%<%"}}
@@ -273,14 +257,14 @@ class WhereTest < Minitest::Test
     assert_equal "expected Searchkick::Script", error.message
   end
 
-  def test_where_string
+  def test_string
     store [
       {name: "Product A", color: "RED"}
     ]
     assert_search "product", ["Product A"], where: {color: "RED"}
   end
 
-  def test_where_nil
+  def test_nil
     store [
       {name: "Product A"},
       {name: "Product B", color: "red"}
@@ -288,25 +272,25 @@ class WhereTest < Minitest::Test
     assert_search "product", ["Product A"], where: {color: nil}
   end
 
-  def test_where_id
+  def test_id
     store_names ["Product A"]
     product = Product.first
     assert_search "product", ["Product A"], where: {id: product.id.to_s}
   end
 
-  def test_where_empty
+  def test_empty
     store_names ["Product A"]
     assert_search "product", ["Product A"], where: {}
   end
 
-  def test_where_empty_array
+  def test_empty_array
     store_names ["Product A"]
     assert_search "product", [], where: {store_id: []}
   end
 
-  # http://elasticsearch-users.115913.n3.nabble.com/Numeric-range-quey-or-filter-in-an-array-field-possible-or-not-td4042967.html
+  # https://discuss.elastic.co/t/numeric-range-quey-or-filter-in-an-array-field-possible-or-not/14053
   # https://gist.github.com/jprante/7099463
-  def test_where_range_array
+  def test_range_array
     store [
       {name: "Product A", user_ids: [11, 23, 13, 16, 17, 23]},
       {name: "Product B", user_ids: [1, 2, 3, 4, 5, 6, 7, 8, 9]},
@@ -315,7 +299,7 @@ class WhereTest < Minitest::Test
     assert_search "product", ["Product A"], where: {user_ids: {gt: 10, lt: 24}}
   end
 
-  def test_where_range_array_again
+  def test_range_array_again
     store [
       {name: "Product A", user_ids: [19, 32, 42]},
       {name: "Product B", user_ids: [13, 40, 52]}
@@ -369,20 +353,10 @@ class WhereTest < Minitest::Test
       {lat: 27.122789, lon: -94.125535},
       {lat: 27.12278, lon: -125.496146}
     ]
-    _, stderr = capture_io do
-      assert_search "san", ["San Francisco", "San Antonio"], where: {location: {geo_polygon: {points: polygon}}}
-    end
-    # only warns for elasticsearch gem < 8
-    # unless Searchkick.server_below?("7.12.0")
-    #   assert_match "Deprecated field [geo_polygon] used", stderr
-    # end
+    assert_search "san", ["San Francisco", "San Antonio"], where: {location: {geo_polygon: {points: polygon}}}
 
-    # Field [location] is not of type [geo_shape] but of type [geo_point] error for previous versions
-    unless Searchkick.server_below?("7.14.0")
-      polygon << polygon.first
-      # see test/geo_shape_test.rb for other geo_shape tests
-      assert_search "san", ["San Francisco", "San Antonio"], where: {location: {geo_shape: {type: "polygon", coordinates: [polygon]}}}
-    end
+    polygon << polygon.first
+    assert_search "san", ["San Francisco", "San Antonio"], where: {location: {geo_shape: {type: "polygon", coordinates: [polygon]}}}
   end
 
   def test_top_left_bottom_right
@@ -447,9 +421,5 @@ class WhereTest < Minitest::Test
       {name: "Product A", details: {year: 2016}}
     ]
     assert_search "product", ["Product A"], where: {"details.year" => 2016}
-  end
-
-  def case_insensitive_supported?
-    !Searchkick.server_below?("7.10.0")
   end
 end

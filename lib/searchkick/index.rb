@@ -164,11 +164,11 @@ module Searchkick
     end
     alias_method :import, :bulk_index
 
-    def bulk_update(records, method_name)
+    def bulk_update(records, method_name, ignore_missing: nil)
       return if records.empty?
 
       notify_bulk(records, "Update") do
-        queue_update(records, method_name)
+        queue_update(records, method_name, ignore_missing: ignore_missing)
       end
     end
 
@@ -192,7 +192,6 @@ module Searchkick
       if Searchkick.opensearch?
         client.transport.perform_request "POST", "_plugins/_refresh_search_analyzers/#{CGI.escape(name)}"
       else
-        raise Error, "Requires Elasticsearch 7.3+" if Searchkick.server_below?("7.3.0")
         begin
           client.transport.perform_request("GET", "#{CGI.escape(name)}/_reload_search_analyzers")
         rescue => e
@@ -212,10 +211,14 @@ module Searchkick
 
     # note: this is designed to be used internally
     # so it does not check object matches index class
-    def reindex(object, method_name: nil, full: false, **options)
+    def reindex(object, method_name: nil, ignore_missing: nil, full: false, **options)
+      if @options[:job_options]
+        options[:job_options] = (@options[:job_options] || {}).merge(options[:job_options] || {})
+      end
+
       if object.is_a?(Array)
         # note: purposefully skip full
-        return reindex_records(object, method_name: method_name, **options)
+        return reindex_records(object, method_name: method_name, ignore_missing: ignore_missing, **options)
       end
 
       if !object.respond_to?(:searchkick_klass)
@@ -231,22 +234,22 @@ module Searchkick
 
       if method_name || (scoped && !full)
         mode = options.delete(:mode) || :inline
+        scope = options.delete(:scope)
+        job_options = options.delete(:job_options)
         raise ArgumentError, "unsupported keywords: #{options.keys.map(&:inspect).join(", ")}" if options.any?
 
         # import only
-        import_scope(relation, method_name: method_name, mode: mode)
+        import_scope(relation, method_name: method_name, mode: mode, scope: scope, ignore_missing: ignore_missing, job_options: job_options)
         self.refresh if refresh
         true
       else
         async = options.delete(:async)
         if async
           if async.is_a?(Hash) && async[:wait]
-            # TODO warn in 5.1
-            # Searchkick.warn "async option is deprecated - use mode: :async, wait: true instead"
+            Searchkick.warn "async option is deprecated - use mode: :async, wait: true instead"
             options[:wait] = true unless options.key?(:wait)
           else
-            # TODO warn in 5.1
-            # Searchkick.warn "async option is deprecated - use mode: :async instead"
+            Searchkick.warn "async option is deprecated - use mode: :async instead"
           end
           options[:mode] ||= :async
         end
@@ -292,6 +295,11 @@ module Searchkick
     end
 
     # private
+    def conversions_v2_fields
+      @conversions_v2_fields ||= Array(options[:conversions_v2]).map(&:to_s)
+    end
+
+    # private
     def suggest_fields
       @suggest_fields ||= Array(options[:suggest]).map(&:to_s)
     end
@@ -323,8 +331,10 @@ module Searchkick
       Searchkick.indexer.queue(records.reject { |r| r.id.blank? }.map { |r| RecordData.new(self, r).delete_data })
     end
 
-    def queue_update(records, method_name)
-      Searchkick.indexer.queue(records.map { |r| RecordData.new(self, r).update_data(method_name) })
+    def queue_update(records, method_name, ignore_missing:)
+      items = records.map { |r| RecordData.new(self, r).update_data(method_name) }
+      items.each { |i| i.instance_variable_set(:@ignore_missing, true) } if ignore_missing
+      Searchkick.indexer.queue(items)
     end
 
     def relation_indexer
@@ -349,11 +359,10 @@ module Searchkick
     end
 
     # https://gist.github.com/jarosan/3124884
-    # http://www.elasticsearch.org/blog/changing-mapping-with-zero-downtime/
-    def full_reindex(relation, import: true, resume: false, retain: false, mode: nil, refresh_interval: nil, scope: nil, wait: nil)
+    # https://www.elastic.co/blog/changing-mapping-with-zero-downtime/
+    def full_reindex(relation, import: true, resume: false, retain: false, mode: nil, refresh_interval: nil, scope: nil, wait: nil, job_options: nil)
       raise ArgumentError, "wait only available in :async mode" if !wait.nil? && mode != :async
-      # TODO raise ArgumentError in Searchkick 6
-      Searchkick.warn("Full reindex does not support :queue mode - use :async mode instead") if mode == :queue
+      raise ArgumentError, "Full reindex does not support :queue mode - use :async mode instead" if mode == :queue
 
       if resume
         index_name = all_indices.sort.last
@@ -371,7 +380,8 @@ module Searchkick
         mode: (mode || :inline),
         full: true,
         resume: resume,
-        scope: scope
+        scope: scope,
+        job_options: job_options
       }
 
       uuid = index.uuid

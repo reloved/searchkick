@@ -4,11 +4,7 @@ require "active_record"
 ActiveRecord::Base.logger = $logger
 
 # rails does this in activerecord/lib/active_record/railtie.rb
-if ActiveRecord::VERSION::MAJOR >= 7
-  ActiveRecord.default_timezone = :utc
-else
-  ActiveRecord::Base.default_timezone = :utc
-end
+ActiveRecord.default_timezone = :utc
 ActiveRecord::Base.time_zone_aware_attributes = true
 
 # migrations
@@ -34,8 +30,8 @@ ActiveRecord::Schema.define do
     t.text :alt_description
     t.text :embedding
     t.text :embedding2
-    t.text :factors
-    t.text :vector
+    t.text :embedding3
+    t.text :embedding4
     t.timestamps null: true
   end
 
@@ -80,17 +76,10 @@ end
 class Product < ActiveRecord::Base
   belongs_to :store
 
-  if ActiveRecord::VERSION::STRING.to_f >= 7.1
-    serialize :embedding, coder: JSON
-    serialize :embedding2, coder: JSON
-    serialize :factors, coder: JSON
-    serialize :vector, coder: JSON
-  else
-    serialize :embedding, JSON
-    serialize :embedding2, JSON
-    serialize :factors, JSON
-    serialize :vector, JSON
-  end
+  serialize :embedding, coder: JSON
+  serialize :embedding2, coder: JSON
+  serialize :embedding3, coder: JSON
+  serialize :embedding4, coder: JSON
 end
 
 class Store < ActiveRecord::Base

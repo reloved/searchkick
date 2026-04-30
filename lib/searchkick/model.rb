@@ -1,10 +1,18 @@
 module Searchkick
   module Model
     def searchkick(**options)
-      options = Searchkick.model_options.merge(options)
+      options = Searchkick.model_options.deep_merge(options)
 
-      unknown_keywords = options.keys - [:_all, :_type, :batch_size, :callbacks, :case_sensitive, :conversions, :deep_paging, :default_fields,
-        :filterable, :geo_shape, :highlight, :ignore_above, :index_name, :index_prefix, :inheritance, :knn, :language,
+      if options[:conversions]
+        Searchkick.warn("The `conversions` option is deprecated in favor of `conversions_v2`, which provides much better search performance. Upgrade to `conversions_v2` or rename `conversions` to `conversions_v1`")
+      end
+
+      if options.key?(:conversions_v1)
+        options[:conversions] = options.delete(:conversions_v1)
+      end
+
+      unknown_keywords = options.keys - [:_all, :_type, :batch_size, :callbacks, :callback_options, :case_sensitive, :conversions, :conversions_v2, :deep_paging, :default_fields,
+        :filterable, :geo_shape, :highlight, :ignore_above, :index_name, :index_prefix, :inheritance, :job_options, :knn, :language,
         :locations, :mappings, :match, :max_result_window, :merge_mappings, :routing, :searchable, :search_synonyms, :settings, :similarity,
         :special_characters, :stem, :stemmer, :stem_conversions, :stem_exclusion, :stemmer_override, :suggest, :synonyms, :text_end,
         :text_middle, :text_start, :unscope, :word, :word_end, :word_middle, :word_start]
@@ -21,14 +29,16 @@ module Searchkick
       unless [:inline, true, false, :async, :queue].include?(callbacks)
         raise ArgumentError, "Invalid value for callbacks"
       end
+      callback_options = (options[:callback_options] || {}).dup
+      callback_options[:if] = [-> { Searchkick.callbacks?(default: callbacks) }, callback_options[:if]].compact.flatten(1)
 
       base = self
 
       mod = Module.new
       include(mod)
       mod.module_eval do
-        def reindex(method_name = nil, mode: nil, refresh: false)
-          self.class.searchkick_index.reindex([self], method_name: method_name, mode: mode, refresh: refresh, single: true)
+        def reindex(method_name = nil, mode: nil, refresh: false, ignore_missing: nil, job_options: nil)
+          self.class.searchkick_index.reindex([self], method_name: method_name, mode: mode, refresh: refresh, ignore_missing: ignore_missing, job_options: job_options, single: true)
         end unless base.method_defined?(:reindex)
 
         def similar(**options)
@@ -99,10 +109,10 @@ module Searchkick
         # always add callbacks, even when callbacks is false
         # so Model.callbacks block can be used
         if respond_to?(:after_commit)
-          after_commit :reindex, if: -> { Searchkick.callbacks?(default: callbacks) }
+          after_commit :reindex, **callback_options
         elsif respond_to?(:after_save)
-          after_save :reindex, if: -> { Searchkick.callbacks?(default: callbacks) }
-          after_destroy :reindex, if: -> { Searchkick.callbacks?(default: callbacks) }
+          after_save :reindex, **callback_options
+          after_destroy :reindex, **callback_options
         end
       end
     end

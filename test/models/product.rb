@@ -9,7 +9,8 @@ class Product
       "lightbulb => halogenlamp"
     ],
     suggest: [:name, :color],
-    conversions: [:conversions],
+    conversions_v1: [:conversions],
+    conversions_v2: [:conversions_v2],
     locations: [:location, :multiple_locations],
     text_start: [:name],
     text_middle: [:name],
@@ -22,12 +23,12 @@ class Product
     similarity: "BM25",
     match: ENV["MATCH"] ? ENV["MATCH"].to_sym : nil,
     knn: Searchkick.knn_support? ? {
-      embedding: {dimensions: 3, distance: "cosine"},
+      embedding: {dimensions: 3, distance: "cosine", m: 16, ef_construction: 100},
       embedding2: {dimensions: 3, distance: "inner_product"},
-      factors: {dimensions: 3, distance: "euclidean"}
-    }.merge(Searchkick.opensearch? ? {} : {vector: {dimensions: 3}}) : nil
+      embedding3: {dimensions: 3, distance: "euclidean"}
+    }.merge(Searchkick.opensearch? ? {} : {embedding4: {dimensions: 3}}) : nil
 
-  attr_accessor :conversions, :user_ids, :aisle, :details
+  attr_accessor :conversions, :conversions_v2, :user_ids, :aisle, :details
 
   class << self
     attr_accessor :dynamic_data
@@ -38,6 +39,7 @@ class Product
 
     serializable_hash.except("id", "_id").merge(
       conversions: conversions,
+      conversions_v2: conversions_v2,
       user_ids: user_ids,
       location: {lat: latitude, lon: longitude},
       multiple_locations: [{lat: latitude, lon: longitude}, {lat: 0, lon: 0}],

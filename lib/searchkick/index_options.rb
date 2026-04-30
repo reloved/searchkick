@@ -184,18 +184,18 @@ module Searchkick
         end
       end
 
-      if options[:case_sensitive]
-        settings[:analysis][:analyzer].each do |_, analyzer|
-          analyzer[:filter].delete("lowercase")
-        end
-      end
-
       add_synonyms(settings)
       add_search_synonyms(settings)
 
       if options[:special_characters] == false
         settings[:analysis][:analyzer].each_value do |analyzer_settings|
           analyzer_settings[:filter].reject! { |f| f == "asciifolding" }
+        end
+      end
+
+      if options[:case_sensitive]
+        settings[:analysis][:analyzer].each do |_, analyzer|
+          analyzer[:filter].delete("lowercase")
         end
       end
 
@@ -372,6 +372,16 @@ module Searchkick
         }
       end
 
+      Array(options[:conversions_v2]).each do |conversions_field|
+        mapping[conversions_field] = {
+          type: "rank_features"
+        }
+      end
+
+      if (Array(options[:conversions_v2]).map(&:to_s) & Array(options[:conversions]).map(&:to_s)).any?
+        raise ArgumentError, "Must have separate conversions fields"
+      end
+
       mapping_options =
         [:suggest, :word, :text_start, :text_middle, :text_end, :word_start, :word_middle, :word_end, :highlight, :searchable, :filterable]
           .to_h { |type| [type, (options[type] || []).map(&:to_s)] }
@@ -423,6 +433,7 @@ module Searchkick
 
       (options[:knn] || []).each do |field, knn_options|
         distance = knn_options[:distance]
+        quantization = knn_options[:quantization]
 
         if Searchkick.opensearch?
           if distance.nil?
@@ -448,10 +459,15 @@ module Searchkick
                 raise ArgumentError, "Unknown distance: #{distance}"
               end
 
+            if !quantization.nil?
+              raise ArgumentError, "Quantization not supported yet for OpenSearch"
+            end
+
             vector_options[:method] = {
               name: "hnsw",
               space_type: space_type,
-              engine: "lucene"
+              engine: "lucene",
+              parameters: knn_options.slice(:m, :ef_construction)
             }
           end
 
@@ -475,6 +491,19 @@ module Searchkick
               else
                 raise ArgumentError, "Unknown distance: #{distance}"
               end
+
+            type =
+              case quantization
+              when "int8", "int4", "bbq"
+                "#{quantization}_hnsw"
+              when nil
+                "hnsw"
+              else
+                raise ArgumentError, "Unknown quantization: #{quantization}"
+              end
+
+            vector_index_options = knn_options.slice(:m, :ef_construction)
+            vector_options[:index_options] = {type: type}.merge(vector_index_options)
           end
 
           mapping[field.to_s] = vector_options
@@ -495,7 +524,7 @@ module Searchkick
 
       dynamic_fields = {
         # analyzed field must be the default field for include_in_all
-        # http://www.elasticsearch.org/guide/reference/mapping/multi-field-type/
+        # https://www.elastic.co/guide/reference/mapping/multi-field-type/
         # however, we can include the not_analyzed field in _all
         # and the _all index analyzer will take care of it
         "{name}" => keyword_mapping
@@ -515,7 +544,7 @@ module Searchkick
         end
       end
 
-      # http://www.elasticsearch.org/guide/reference/mapping/multi-field-type/
+      # https://www.elastic.co/guide/reference/mapping/multi-field-type/
       multi_field = dynamic_fields["{name}"].merge(fields: dynamic_fields.except("{name}"))
 
       mappings = {
@@ -549,7 +578,7 @@ module Searchkick
         # https://groups.google.com/forum/#!topic/elasticsearch/p7qcQlgHdB8
         # TODO use a snowball stemmer on synonyms when creating the token filter
 
-        # http://elasticsearch-users.115913.n3.nabble.com/synonym-multi-words-search-td4030811.html
+        # https://discuss.elastic.co/t/synonym-multi-words-search/10964
         # I find the following approach effective if you are doing multi-word synonyms (synonym phrases):
         # - Only apply the synonym expansion at index time
         # - Don't have the synonym filter applied search
@@ -569,9 +598,9 @@ module Searchkick
         if search_synonyms.is_a?(String)
           synonym_graph = {
             type: "synonym_graph",
-            synonyms_path: search_synonyms
+            synonyms_path: search_synonyms,
+            updateable: true
           }
-          synonym_graph[:updateable] = true unless below73?
         else
           synonym_graph = {
             type: "synonym_graph",
@@ -618,10 +647,6 @@ module Searchkick
 
     def default_analyzer
       :searchkick_index
-    end
-
-    def below73?
-      Searchkick.server_below?("7.3.0")
     end
   end
 end

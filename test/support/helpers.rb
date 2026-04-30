@@ -45,6 +45,8 @@ class Minitest::Test
           model.create!(documents.shuffle)
         end
       end
+      # prevent warnings
+      model.searchkick_index.refresh
     end
   end
 
@@ -55,6 +57,7 @@ class Minitest::Test
   # no order
   def assert_search(term, expected, options = {}, model = default_model)
     assert_equal expected.sort, model.search(term, **options).map(&:name).sort
+    assert_equal expected.sort, build_relation(model, term, **options).map(&:name).sort
   end
 
   def assert_search_relation(expected, relation)
@@ -63,6 +66,7 @@ class Minitest::Test
 
   def assert_order(term, expected, options = {}, model = default_model)
     assert_equal expected, model.search(term, **options).map(&:name)
+    assert_equal expected, build_relation(model, term, **options).map(&:name)
   end
 
   def assert_order_relation(expected, relation)
@@ -77,19 +81,19 @@ class Minitest::Test
     assert_equal expected, model.search(term, **options).map(&:name).first
   end
 
-  def assert_misspellings(term, expected, misspellings = {}, model = default_model)
-    options = {
-      fields: [:name, :color],
-      misspellings: misspellings
-    }
-    assert_search(term, expected, options, model)
-  end
-
   def assert_warns(message)
     _, stderr = capture_io do
       yield
     end
     assert_match "[searchkick] WARNING: #{message}", stderr
+  end
+
+  def build_relation(model, term, **options)
+    relation = model.search(term)
+    options.each do |k, v|
+      relation = relation.public_send(k, v)
+    end
+    relation
   end
 
   def with_options(options, model = default_model)

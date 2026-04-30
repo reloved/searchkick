@@ -71,6 +71,11 @@ class PaginationTest < Minitest::Test
     assert products.any?
   end
 
+  def test_per
+    store_names ["Product A", "Product B", "Product C"]
+    assert_order_relation ["Product A", "Product B"], Product.search("product").order(name: :asc).per(2)
+  end
+
   def test_body
     store_names ["Product A", "Product B", "Product C", "Product D", "Product E", "Product F"]
     products = Product.search("product", body: {query: {match_all: {}}, sort: [{name: "asc"}]}, page: 2, per_page: 2, padding: 1)
@@ -230,6 +235,6 @@ class PaginationTest < Minitest::Test
   private
 
   def pit_supported?
-    Searchkick.opensearch? ? !Searchkick.server_below?("2.4.0", true) : !Searchkick.server_below?("7.10.0")
+    Searchkick.opensearch? ? !Searchkick.server_below?("2.4.0") : true
   end
 end

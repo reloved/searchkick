@@ -1,5 +1,5 @@
 module Searchkick
-  class ProcessBatchJob < ActiveJob::Base
+  class ProcessBatchJob < Searchkick.parent_job.constantize
     queue_as { Searchkick.queue_name }
 
     def perform(class_name:, record_ids:, index_name: nil)
@@ -14,7 +14,7 @@ module Searchkick
         end
 
       relation = Searchkick.scope(model)
-      RecordIndexer.new(index).reindex_items(relation, items, method_name: nil)
+      RecordIndexer.new(index).reindex_items(relation, items, method_name: nil, ignore_missing: nil)
     end
   end
 end

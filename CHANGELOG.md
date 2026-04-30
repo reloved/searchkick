@@ -1,3 +1,64 @@
+## 6.1.1 (unreleased)
+
+- Fixed smart aggs behavior with `_and`
+
+## 6.1.0 (2026-02-18)
+
+- Added `per` method
+- Fixed error with `aggs` method and non-hash arguments
+- Fixed smart aggs behavior when multiple `where` calls
+
+## 6.0.3 (2026-01-06)
+
+- Fixed `inspect` method for `Relation`
+
+## 6.0.2 (2025-10-24)
+
+- Fixed `as_json` method for `HashWrapper`
+
+## 6.0.1 (2025-10-24)
+
+- Fixed `to_json` method for `HashWrapper`
+
+## 6.0.0 (2025-10-19)
+
+- Added new query builder API (similar to Active Record)
+- Added `conversions_v2` option
+- Added `job_options` option
+- Added `parent_job` option
+- Added `opaque_id` option
+- Added `callback_options` option
+- Added `ignore_missing` option for partial reindex
+- Added support for `exists: false`
+- Added `quantization` to `knn` option for Elasticsearch
+- Changed async reindex to use ranges for numeric primary keys with Active Record
+- Fixed error with `case_sensitive` option and synonyms
+- Removed default quantization for `knn` option for Elasticsearch 8.14+
+- Removed `results` method (use `to_a` instead)
+- Removed `execute` option and method (no longer needed)
+- Removed `options` method (use individual methods instead)
+- Removed dependency on Hashie
+- Deprecated `conversions` option in favor of `conversions_v2`
+- Dropped support for Elasticsearch 7 and OpenSearch 1
+- Dropped support for Active Record < 7.2
+- Dropped support for Redis < 6.2
+
+## 5.5.2 (2025-05-20)
+
+- Fixed `scope` option for partial reindex
+
+## 5.5.1 (2025-04-24)
+
+- Added support for `elasticsearch` 9 gem
+
+## 5.5.0 (2025-04-03)
+
+- Added `m` and `ef_construction` to `knn` index option
+- Added `ef_search` to `knn` search option
+- Fixed exact cosine distance for OpenSearch 2.19+
+- Dropped support for Ruby < 3.2 and Active Record < 7.1
+- Dropped support for Mongoid < 8
+
 ## 5.4.0 (2024-09-04)
 
 - Added `knn` option
@@ -833,4 +894,22 @@ Breaking changes
 
 ## 0.1.2 (2013-07-30)
 
-- Launch
+- Use conversions by default
+
+## 0.1.1 (2013-07-29)
+
+- Renamed `_source` to `search_data`
+- Renamed `searchkick_import` to `search_import`
+
+## 0.1.0 (2013-07-28)
+
+- Added `_source` method
+- Added `index_name` option
+
+## 0.0.2 (2013-07-17)
+
+- Added `conversions` option
+
+## 0.0.1 (2013-07-14)
+
+- First release

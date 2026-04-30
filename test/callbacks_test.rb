@@ -16,6 +16,14 @@ class CallbacksTest < Minitest::Test
     assert_search "product", ["Product A", "Product B"]
   end
 
+  def test_async
+    assert_enqueued_jobs 2 do
+      Searchkick.callbacks(:async) do
+        store_names ["Product A", "Product B"]
+      end
+    end
+  end
+
   def test_queue
     # TODO figure out which earlier test leaves records in index
     Product.reindex
@@ -56,21 +64,41 @@ class CallbacksTest < Minitest::Test
     Searchkick::ProcessQueueJob.perform_now(class_name: "Product")
   end
 
+  def test_record_async
+    with_options({callbacks: :async}, Song) do
+      assert_enqueued_jobs 1 do
+        Song.create!(name: "Product A")
+      end
+
+      assert_enqueued_jobs 1 do
+        Song.first.reindex
+      end
+    end
+  end
+
+  def test_relation_async
+    with_options({callbacks: :async}, Song) do
+      assert_enqueued_jobs 0 do
+        Song.all.reindex
+      end
+    end
+  end
+
   def test_disable_callbacks
     # make sure callbacks default to on
     assert Searchkick.callbacks?
 
-    store_names ["product a"]
+    store_names ["Product A"]
 
     Searchkick.disable_callbacks
     assert !Searchkick.callbacks?
 
-    store_names ["product b"]
-    assert_search "product", ["product a"]
+    store_names ["Product B"]
+    assert_search "product", ["Product A"]
 
     Searchkick.enable_callbacks
     Product.reindex
 
-    assert_search "product", ["product a", "product b"]
+    assert_search "product", ["Product A", "Product B"]
   end
 end

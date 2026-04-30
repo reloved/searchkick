@@ -8,6 +8,25 @@ class SearchTest < Minitest::Test
     assert_equal "search must be called on model, not relation", error.message
   end
 
+  def test_unscoped
+    if mongoid?
+      Product.unscoped do
+        Product.search("*")
+      end
+    else
+      error = assert_raises(Searchkick::Error) do
+        Product.unscoped do
+          Product.search("*")
+        end
+      end
+      assert_equal "search must be called on model, not relation", error.message
+    end
+
+    Product.unscoped do
+      Searchkick.search("*", models: [Product])
+    end
+  end
+
   def test_body
     store_names ["Dollar Tree"], Store
     assert_equal ["Dollar Tree"], Store.search(body: {query: {match: {name: "dollar"}}}, load: false).map(&:name)
@@ -54,21 +73,6 @@ class SearchTest < Minitest::Test
 
   def test_missing_index
     assert_raises(Searchkick::MissingIndexError) { Product.search("test", index_name: "not_found").to_a }
-  end
-
-  def test_unsupported_version
-    skip if Searchkick.opensearch?
-
-    raises_exception = lambda do |*|
-      if defined?(Elastic::Transport)
-        raise Elastic::Transport::Transport::Error, "[500] No query registered for [multi_match]"
-      else
-        raise Elasticsearch::Transport::Transport::Error, "[500] No query registered for [multi_match]"
-      end
-    end
-    Searchkick.client.stub :search, raises_exception do
-      assert_raises(Searchkick::UnsupportedVersionError) { Product.search("test").to_a }
-    end
   end
 
   def test_invalid_body

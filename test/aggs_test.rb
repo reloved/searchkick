@@ -11,37 +11,53 @@ class AggsTest < Minitest::Test
     ]
   end
 
-  def test_basic
-    assert_equal ({1 => 1, 2 => 2}), store_agg(aggs: [:store_id])
+  def test_single
+    assert_aggs ({"store_id" => {1 => 1, 2 => 2}}), aggs: [:store_id]
+    assert_aggs ({"store_id" => {1 => 1, 2 => 2}}), Product.search("Product").aggs(:store_id)
+  end
+
+  def test_multiple
+    expected = {"store_id" => {1 => 1, 2 => 2}, "color" => {"blue" => 1, "green" => 1, "red" => 1}}
+    assert_aggs expected, aggs: [:store_id, :color]
+    assert_aggs expected, Product.search("Product").aggs(:store_id, :color)
+    assert_aggs expected, Product.search("Product").aggs([:store_id, :color])
+  end
+
+  def test_multiple_where
+    expected = {"store_id" => {1 => 1}, "color" => {"blue" => 1, "green" => 1, "red" => 1}}
+    assert_aggs expected, aggs: {color: {}, store_id: {where: {in_stock: true}}}
+    assert_aggs expected, Product.search("Product").aggs(:color, store_id: {where: {in_stock: true}})
+  end
+
+  def test_none
+    assert_nil Product.search("*").aggs
   end
 
   def test_where
-    assert_equal ({1 => 1}), store_agg(aggs: {store_id: {where: {in_stock: true}}})
+    assert_aggs ({"store_id" => {1 => 1}}), aggs: {store_id: {where: {in_stock: true}}}
+    assert_aggs ({"store_id" => {1 => 1}}), Product.search("Product").aggs(store_id: {where: {in_stock: true}})
+    assert_aggs ({"store_id" => {1 => 1}}), Product.search("Product").aggs({store_id: {where: {in_stock: true}}})
+    assert_aggs ({"store_id" => {1 => 1}}), aggs: {store_id: {where: {_not: {in_stock: false}}}}
+  end
+
+  def test_field
+    assert_aggs ({"store_id" => {1 => 1, 2 => 2}}), aggs: {store_id: {}}
+    assert_aggs ({"store_id" => {1 => 1, 2 => 2}}), aggs: {store_id: {field: "store_id"}}
+    assert_aggs ({"store_id_new" => {1 => 1, 2 => 2}}), aggs: {store_id_new: {field: "store_id"}}
+  end
+
+  def test_min_doc_count
+    assert_aggs ({"store_id" => {2 => 2}}), aggs: {store_id: {min_doc_count: 2}}
+  end
+
+  def test_script
+    expected = {"color" => {"Color: blue" => 1, "Color: green" => 1, "Color: red" => 1}}
+    assert_aggs expected, aggs: {color: {script: {source: "'Color: ' + _value"}}}
   end
 
   def test_order
     agg = Product.search("Product", aggs: {color: {order: {_key: "desc"}}}).aggs["color"]
-    assert_equal %w(red green blue), agg["buckets"].map { |b| b["key"] }
-  end
-
-  def test_field
-    assert_equal ({1 => 1, 2 => 2}), store_agg(aggs: {store_id: {}})
-    assert_equal ({1 => 1, 2 => 2}), store_agg(aggs: {store_id: {field: "store_id"}})
-    assert_equal ({1 => 1, 2 => 2}), store_agg({aggs: {store_id_new: {field: "store_id"}}}, "store_id_new")
-  end
-
-  def test_min_doc_count
-    assert_equal ({2 => 2}), store_agg(aggs: {store_id: {min_doc_count: 2}})
-  end
-
-  def test_script
-    source = "'Color: ' + _value"
-    agg = Product.search("Product", aggs: {color: {script: {source: source}}}).aggs["color"]
-    assert_equal ({"Color: blue" => 1, "Color: green" => 1, "Color: red" => 1}), buckets_as_hash(agg)
-  end
-
-  def test_no_aggs
-    assert_nil Product.search("*").aggs
+    assert_equal ["red", "green", "blue"], agg["buckets"].map { |b| b["key"] }
   end
 
   def test_limit
@@ -54,7 +70,6 @@ class AggsTest < Minitest::Test
   def test_ranges
     price_ranges = [{to: 10}, {from: 10, to: 20}, {from: 20}]
     agg = Product.search("Product", aggs: {price: {ranges: price_ranges}}).aggs["price"]
-
     assert_equal 3, agg["buckets"].size
     assert_equal 10.0, agg["buckets"][0]["to"]
     assert_equal 20.0, agg["buckets"][2]["from"]
@@ -66,205 +81,196 @@ class AggsTest < Minitest::Test
   def test_date_ranges
     ranges = [{to: 1.day.ago}, {from: 1.day.ago, to: 1.day.from_now}, {from: 1.day.from_now}]
     agg = Product.search("Product", aggs: {created_at: {date_ranges: ranges}}).aggs["created_at"]
-
     assert_equal 1, agg["buckets"][0]["doc_count"]
     assert_equal 1, agg["buckets"][1]["doc_count"]
     assert_equal 1, agg["buckets"][2]["doc_count"]
   end
 
-  def test_query_where
-    assert_equal ({1 => 1}), store_agg(where: {in_stock: true}, aggs: [:store_id])
-  end
-
-  def test_two_wheres
-    assert_equal ({2 => 1}), store_agg(where: {color: "red"}, aggs: {store_id: {where: {in_stock: false}}})
-  end
-
-  def test_where_override
-    assert_equal ({}), store_agg(where: {color: "red"}, aggs: {store_id: {where: {in_stock: false, color: "blue"}}})
-    assert_equal ({2 => 1}), store_agg(where: {color: "blue"}, aggs: {store_id: {where: {in_stock: false, color: "red"}}})
-  end
-
-  def test_skip
-    assert_equal ({1 => 1, 2 => 2}), store_agg(where: {store_id: 2}, aggs: [:store_id])
-  end
-
-  def test_skip_complex
-    assert_equal ({1 => 1, 2 => 1}), store_agg(where: {store_id: 2, price: {gt: 5}}, aggs: [:store_id])
-  end
-
-  def test_multiple
-    assert_equal ({"store_id" => {1 => 1, 2 => 2}, "color" => {"blue" => 1, "green" => 1, "red" => 1}}), store_multiple_aggs(aggs: [:store_id, :color])
-  end
-
-  def test_smart_aggs_false
-    assert_equal ({2 => 2}), store_agg(where: {color: "red"}, aggs: {store_id: {where: {in_stock: false}}}, smart_aggs: false)
-    assert_equal ({2 => 2}), store_agg(where: {color: "blue"}, aggs: {store_id: {where: {in_stock: false}}}, smart_aggs: false)
-  end
-
-  def test_aggs_group_by_date
+  def test_group_by_date
     store [{name: "Old Product", created_at: 3.years.ago}]
-    products =
-      Product.search("Product",
-        where: {
-          created_at: {lt: Time.now}
-        },
-        aggs: {
-          products_per_year: {
-            date_histogram: {
-              field: :created_at,
-              interval_key => :year
-            }
-          }
-        }
-      )
-
+    aggs = {products_per_year: {date_histogram: {field: :created_at, calendar_interval: :year}}}
+    products = Product.search("Product", where: {created_at: {lt: Time.now}}, aggs: aggs)
     assert_equal 4, products.aggs["products_per_year"]["buckets"].size
   end
 
-  def test_aggs_with_time_zone
+  def test_time_zone
     start_time = Time.at(1529366400)
-
     store [
       {name: "Opera House Pass", created_at: start_time},
       {name: "London Eye Pass", created_at: start_time + 16.hours},
       {name: "London Tube Pass", created_at: start_time + 16.hours}
     ]
 
-    sydney_search = search_aggregate_by_day_with_time_zone('Pass', '+10:00') # Sydney
-    london_search = search_aggregate_by_day_with_time_zone('Pass', '+01:00') # London
-
-    # London search will return all 3 in one bucket because of time zone offset
-    expected_london_buckets = [
+    london_aggs = {products_per_day: {date_histogram: {field: :created_at, calendar_interval: :day, time_zone: "+01:00"}}}
+    expected = [
       {"key_as_string" => "2018-06-19T00:00:00.000+01:00", "key" => 1529362800000, "doc_count" => 3}
     ]
-    assert_equal expected_london_buckets, london_search.aggs["products_per_day"]["buckets"]
+    assert_equal expected, Product.search("Pass", aggs: london_aggs).aggs["products_per_day"]["buckets"]
 
-    # Sydney search will return them in separate buckets due to time zone offset
-    expected_sydney_buckets = [
+    sydney_aggs = {products_per_day: {date_histogram: {field: :created_at, calendar_interval: :day, time_zone: "+10:00"}}}
+    expected = [
       {"key_as_string" => "2018-06-19T00:00:00.000+10:00", "key" => 1529330400000, "doc_count" => 1},
       {"key_as_string" => "2018-06-20T00:00:00.000+10:00", "key" => 1529416800000, "doc_count" => 2}
     ]
-    assert_equal expected_sydney_buckets, sydney_search.aggs["products_per_day"]["buckets"]
+    assert_equal expected, Product.search("Pass", aggs: sydney_aggs).aggs["products_per_day"]["buckets"]
   end
 
-  def test_aggs_avg
-    products =
-      Product.search("*",
-        aggs: {
-          avg_price: {
-            avg: {
-              field: :price
-            }
-          }
-        }
-      )
+  def test_avg
+    products = Product.search("*", aggs: {avg_price: {avg: {field: :price}}})
     assert_equal 16.5, products.aggs["avg_price"]["value"]
   end
 
-  def test_aggs_cardinality
-    products =
-      Product.search("*",
-        aggs: {
-          total_stores: {
-            cardinality: {
-              field: :store_id
-            }
-          }
-        }
-      )
+  def test_cardinality
+    products = Product.search("*", aggs: {total_stores: {cardinality: {field: :store_id}}})
     assert_equal 3, products.aggs["total_stores"]["value"]
   end
 
-  def test_aggs_min_max
-    products =
-      Product.search("*",
-        aggs: {
-          min_price: {
-            min: {
-              field: :price
-            }
-          },
-          max_price: {
-            max: {
-              field: :price
-            }
-          }
-        }
-      )
+  def test_min_max
+    products = Product.search("*", aggs: {min_price: {min: {field: :price}}, max_price: {max: {field: :price}}})
     assert_equal 5, products.aggs["min_price"]["value"]
     assert_equal 25, products.aggs["max_price"]["value"]
   end
 
-  def test_aggs_sum
-    products =
-      Product.search("*",
-        aggs: {
-          sum_price: {
-            sum: {
-              field: :price
-            }
-          }
-        }
-      )
+  def test_sum
+    products = Product.search("*", aggs: {sum_price: {sum: {field: :price}}})
     assert_equal 66, products.aggs["sum_price"]["value"]
   end
 
   def test_body_options
-    products =
-      Product.search("*",
-        body_options: {
-          aggs: {
-            price: {
-              histogram: {field: :price, interval: 10}
-            }
-          }
-        }
-      )
+    expected = {"price" => {0.0 => 1, 10.0 => 0, 20.0 => 2}}
+    assert_aggs expected, body_options: {aggs: {price: {histogram: {field: :price, interval: 10}}}}
+  end
 
-    expected = [
-      {"key" => 0.0, "doc_count" => 1},
-      {"key" => 10.0, "doc_count" => 1},
-      {"key" => 20.0, "doc_count" => 2}
-    ]
-    assert_equal products.aggs["price"]["buckets"], expected
+  def test_smart_aggs
+    assert_aggs ({"store_id" => {1 => 1}}), where: {in_stock: true}, aggs: [:store_id]
+    assert_aggs ({"store_id" => {1 => 1, 2 => 2}}), where: {in_stock: true}, aggs: [:store_id], smart_aggs: false
+
+    assert_aggs ({"store_id" => {2 => 2}}), where: {_not: {in_stock: true}}, aggs: [:store_id]
+    assert_aggs ({"store_id" => {1 => 1, 2 => 2}}), where: {_not: {in_stock: true}}, aggs: [:store_id], smart_aggs: false
+
+    assert_aggs ({"store_id" => {1 => 1}}), where: {_and: [{in_stock: true}]}, aggs: [:store_id]
+    assert_aggs ({"store_id" => {1 => 1, 2 => 2}}), where: {_and: [{in_stock: true}]}, aggs: [:store_id], smart_aggs: false
+
+    assert_aggs ({"store_id" => {1 => 1}}), where: {_or: [{in_stock: true}]}, aggs: [:store_id]
+    assert_aggs ({"store_id" => {1 => 1, 2 => 2}}), where: {_or: [{in_stock: true}]}, aggs: [:store_id], smart_aggs: false
+
+    assert_aggs ({"store_id" => {1 => 1}}), where: {or: [[{in_stock: true}]]}, aggs: [:store_id]
+    assert_aggs ({"store_id" => {1 => 1, 2 => 2}}), where: {or: [[{in_stock: true}]]}, aggs: [:store_id], smart_aggs: false
+
+    assert_aggs ({"store_id" => {1 => 1}}), where: {_script: Searchkick.script("doc['in_stock'].value")}, aggs: [:store_id]
+    assert_aggs ({"store_id" => {1 => 1, 2 => 2}}), where: {_script: Searchkick.script("doc['in_stock'].value")}, aggs: [:store_id], smart_aggs: false
+  end
+
+  def test_smart_aggs_overlap
+    assert_aggs ({"store_id" => {1 => 1, 2 => 2}}), where: {store_id: 2}, aggs: [:store_id]
+    assert_aggs ({"store_id" => {1 => 1, 2 => 2}}), where: {store_id: 2}, aggs: [:store_id], smart_aggs: false
+
+    # TODO change
+    assert_aggs ({"store_id" => {2 => 2}}), where: {store_id: 2}, aggs: ["store_id"]
+    # TODO change
+    assert_aggs ({"store_id" => {2 => 2}}), where: {"store_id" => 2}, aggs: [:store_id]
+
+    assert_aggs ({"store_id" => {1 => 1, 2 => 2}}), where: {store_id: {not: 2}}, aggs: [:store_id]
+    assert_aggs ({"store_id" => {1 => 1, 2 => 2}}), where: {store_id: {not: 2}}, aggs: [:store_id], smart_aggs: false
+
+    assert_aggs ({"store_id" => {1 => 1, 2 => 2}}), where: {store_id: {gt: 2}}, aggs: [:store_id]
+    assert_aggs ({"store_id" => {1 => 1, 2 => 2}}), where: {store_id: {gt: 2}}, aggs: [:store_id], smart_aggs: false
+
+    # TODO change
+    assert_aggs ({"store_id" => {1 => 1}}), where: {_not: {store_id: 2}}, aggs: [:store_id]
+    assert_aggs ({"store_id" => {1 => 1, 2 => 2}}), where: {_not: {store_id: 2}}, aggs: [:store_id], smart_aggs: false
+
+    # TODO change
+    assert_aggs ({"store_id" => {2 => 2}}), where: {_and: [{store_id: 2}]}, aggs: [:store_id]
+    assert_aggs ({"store_id" => {1 => 1, 2 => 2}}), where: {_and: [{store_id: 2}]}, aggs: [:store_id], smart_aggs: false
+
+    # TODO change
+    assert_aggs ({"store_id" => {}}), where: {_and: [{store_id: 2}, {in_stock: true}]}, aggs: [:store_id]
+    assert_aggs ({"store_id" => {1 => 1, 2 => 2}}), where: {_and: [{store_id: 2}, {in_stock: true}]}, aggs: [:store_id], smart_aggs: false
+
+    # TODO change
+    assert_aggs ({"store_id" => {2 => 2}}), where: {_or: [{store_id: 2}]}, aggs: [:store_id]
+    assert_aggs ({"store_id" => {1 => 1, 2 => 2}}), where: {_or: [{store_id: 2}]}, aggs: [:store_id], smart_aggs: false
+
+    assert_aggs ({"store_id" => {1 => 1, 2 => 2}}), where: {_or: [{store_id: 2}, {in_stock: true}]}, aggs: [:store_id]
+    assert_aggs ({"store_id" => {1 => 1, 2 => 2}}), where: {_or: [{store_id: 2}, {in_stock: true}]}, aggs: [:store_id], smart_aggs: false
+
+    # TODO change
+    assert_aggs ({"store_id" => {2 => 2}}), where: {or: [[{store_id: 2}]]}, aggs: [:store_id]
+    assert_aggs ({"store_id" => {1 => 1, 2 => 2}}), where: {or: [[{store_id: 2}]]}, aggs: [:store_id], smart_aggs: false
+
+    assert_aggs ({"store_id" => {1 => 1, 2 => 1}}), where: {store_id: 2, price: {gt: 5}}, aggs: [:store_id]
+    assert_aggs ({"store_id" => {1 => 1, 2 => 2}}), where: {store_id: 2, price: {gt: 5}}, aggs: [:store_id], smart_aggs: false
+  end
+
+  def test_smart_aggs_agg_where
+    assert_aggs ({"store_id" => {2 => 1}}), where: {color: "red"}, aggs: {store_id: {where: {in_stock: false}}}
+    assert_aggs ({"store_id" => {2 => 2}}), where: {color: "red"}, aggs: {store_id: {where: {in_stock: false}}}, smart_aggs: false
+
+    assert_aggs ({"store_id" => {}}), where: {color: "blue"}, aggs: {store_id: {where: {in_stock: false}}}
+    assert_aggs ({"store_id" => {2 => 2}}), where: {color: "blue"}, aggs: {store_id: {where: {in_stock: false}}}, smart_aggs: false
+
+    # TODO change
+    assert_aggs ({"store_id" => {2 => 2}}), where: {_not: {color: "red"}}, aggs: {store_id: {where: {_not: {in_stock: true}}}}
+    assert_aggs ({"store_id" => {2 => 2}}), where: {_not: {color: "red"}}, aggs: {store_id: {where: {_not: {in_stock: true}}}}, smart_aggs: false
+
+    # TODO change
+    assert_aggs ({"store_id" => {2 => 2}}), where: {_and: [{color: "red"}]}, aggs: {store_id: {where: {_and: [{in_stock: false}]}}}
+    assert_aggs ({"store_id" => {2 => 2}}), where: {_and: [{color: "red"}]}, aggs: {store_id: {where: {_and: [{in_stock: false}]}}}, smart_aggs: false
+
+    # TODO change
+    assert_aggs ({"store_id" => {2 => 2}}), where: {_or: [{color: "red"}]}, aggs: {store_id: {where: {_or: [{in_stock: false}]}}}
+    assert_aggs ({"store_id" => {2 => 2}}), where: {_or: [{color: "red"}]}, aggs: {store_id: {where: {_or: [{in_stock: false}]}}}, smart_aggs: false
+
+    # TODO change
+    assert_aggs ({"store_id" => {2 => 2}}), where: {or: [[{color: "red"}]]}, aggs: {store_id: {where: {or: [[{in_stock: false}]]}}}
+    assert_aggs ({"store_id" => {2 => 2}}), where: {or: [[{color: "red"}]]}, aggs: {store_id: {where: {or: [[{in_stock: false}]]}}}, smart_aggs: false
+
+    # TODO change
+    assert_aggs ({"store_id" => {2 => 2}}), where: {_script: Searchkick.script("doc['color'].value == 'red'")}, aggs: {store_id: {where: {_script: Searchkick.script("!doc['in_stock'].value")}}}
+    assert_aggs ({"store_id" => {2 => 2}}), where: {_script: Searchkick.script("doc['color'].value == 'red'")}, aggs: {store_id: {where: {_script: Searchkick.script("!doc['in_stock'].value")}}}, smart_aggs: false
+  end
+
+  # only basic conditions are overridden (the rest are additive)
+  def test_smart_aggs_agg_where_overlap
+    assert_aggs ({"store_id" => {}}), where: {color: "red"}, aggs: {store_id: {where: {in_stock: false, color: "blue"}}}
+    assert_aggs ({"store_id" => {}}), where: {color: "red"}, aggs: {store_id: {where: {in_stock: false, color: "blue"}}}, smart_aggs: false
+
+    assert_aggs ({"store_id" => {2 => 1}}), where: {color: "blue"}, aggs: {store_id: {where: {in_stock: false, color: "red"}}}
+    assert_aggs ({"store_id" => {2 => 1}}), where: {color: "blue"}, aggs: {store_id: {where: {in_stock: false, color: "red"}}}, smart_aggs: false
+
+    # TODO change
+    assert_aggs ({"store_id" => {}}), where: {color: "blue"}, aggs: {store_id: {where: {in_stock: false, "color" => "red"}}}
+    # TODO change
+    assert_aggs ({"store_id" => {}}), where: {"color" => "blue"}, aggs: {store_id: {where: {in_stock: false, color: "red"}}}
+
+    assert_aggs ({"store_id" => {}}), where: {_and: [{color: "blue"}]}, aggs: {store_id: {where: {in_stock: false, color: "red"}}}
+    assert_aggs ({"store_id" => {2 => 1}}), where: {_and: [{color: "blue"}]}, aggs: {store_id: {where: {in_stock: false, color: "red"}}}, smart_aggs: false
+  end
+
+  def test_smart_aggs_relation
+    # TODO change
+    assert_aggs ({"store_id" => {1 => 1}}), Product.search("Product").where.not(store_id: 2).aggs(:store_id)
+    assert_aggs ({"store_id" => {1 => 1, 2 => 2}}), Product.search("Product").where.not(store_id: 2).aggs(:store_id).smart_aggs(false)
+
+    assert_aggs ({"store_id" => {1 => 1, 2 => 1}}), Product.search("Product").where(store_id: 2).where(price: {gt: 5}).aggs(:store_id)
+    assert_aggs ({"store_id" => {1 => 1, 2 => 1}}), Product.search("Product").where(store_id: 2, price: {gt: 5}).aggs(:store_id)
+    assert_aggs ({"store_id" => {1 => 1, 2 => 1}}), Product.search("Product").where(_and: [{price: {gt: 5}}]).where(store_id: 2).aggs(:store_id)
+    assert_aggs ({"store_id" => {2 => 2}}), Product.search("Product").where(color: "red").aggs(store_id: {where: {in_stock: false}}).smart_aggs(false)
   end
 
   protected
 
-  def search_aggregate_by_day_with_time_zone(query, time_zone = '-8:00')
-    Product.search(query,
-      where: {
-        created_at: {lt: Time.now}
-      },
-      aggs: {
-        products_per_day: {
-          date_histogram: {
-            field: :created_at,
-            interval_key => :day,
-            time_zone: time_zone
-          }
-        }
-      }
-    )
-  end
-
-  def buckets_as_hash(agg)
-    agg["buckets"].to_h { |v| [v["key"], v["doc_count"]] }
-  end
-
-  def store_agg(options, agg_key = "store_id")
-    buckets = Product.search("Product", **options).aggs[agg_key]
-    buckets_as_hash(buckets)
-  end
-
-  def store_multiple_aggs(options)
-    Product.search("Product", **options).aggs.to_h do |field, filtered_agg|
-      [field, buckets_as_hash(filtered_agg)]
+  def assert_aggs(expected, options)
+    if options.is_a?(Searchkick::Relation)
+      assert_equal expected, agg_buckets(options)
+    else
+      assert_equal expected, agg_buckets(Product.search("Product", **options))
+      assert_equal expected, agg_buckets(build_relation(Product, "Product", **options))
     end
   end
 
-  def interval_key
-    Searchkick.server_below?("7.4.0") ? :interval : :calendar_interval
+  def agg_buckets(relation)
+    relation.aggs.to_h { |f, a| [f, a["buckets"].to_h { |v| [v["key"], v["doc_count"]] }] }
   end
 end
